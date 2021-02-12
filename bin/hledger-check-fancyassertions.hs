@@ -91,6 +91,7 @@ hledger-check-fancyassertions "(assets:overdraft  < £2000) ==> (*assets:checkin
 my checking account (including subaccounts)."
 -}
 
+{-# OPTIONS_GHC -Wno-missing-signatures -Wno-name-shadowing #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PackageImports    #-}
 {-# LANGUAGE QuasiQuotes #-}
@@ -98,17 +99,14 @@ my checking account (including subaccounts)."
 module Main where
 
 import Data.String.QQ (s)
-import qualified Data.Text.IO as T
 import Hledger.Cli hiding (Not,Account,Amount)
 import Data.Default (def)
 
-import Control.Arrow (first)
-import Control.Monad (mplus, mzero, unless, void)
+import Control.Monad (mplus, mzero, void)
 import Control.Monad.Trans.Class (lift)
-import Control.Monad.Trans.State.Strict (runStateT)
 import Data.String (fromString)
 import Data.Function (on)
-import Data.Functor.Identity (Identity(..))
+-- import Data.Functor.Identity (Identity(..))
 import Data.List (foldl', groupBy, intercalate, nub, sortOn)
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty, toList)
 import Data.Maybe (fromMaybe, mapMaybe)
@@ -118,17 +116,20 @@ import Data.Text (Text, isPrefixOf, pack, unpack)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Hledger.Data as H
-import qualified Hledger.Query as H
+-- import qualified Hledger.Query as H
 import qualified Hledger.Read as H
 import qualified Hledger.Utils.Parse as H
 import System.Console.CmdArgs.Explicit
 import Options.Applicative
 import "base-compat" Prelude.Compat ((<>))
 import System.Exit (exitFailure)
-import System.FilePath (FilePath)
+-- import System.FilePath (FilePath)
 import qualified Text.Megaparsec as P
 import qualified Text.Megaparsec.Char as P
 import System.Environment (getArgs)
+
+-- WIP: porting to cmdargs and consistent addon scripts style to fix
+-- #1464 and improve maintainability
 
 -------------------------------------------------------------------------------
 -- Old:
@@ -261,44 +262,125 @@ import System.Environment (getArgs)
 -- Command-line Arguments
 
 cmdmode = hledgerCommandMode
-  [s| check-fancy-assertions
-Swap date and date2, on transactions which have date2 defined.
-(Does not yet swap posting dates.)
+  [s| check-fancyassertions
+Check more complex balance assertions on account balances over time.
 _FLAGS
   |]
-  [] 
+  [
+--     <$> (optional . strOption)
+--           (arg 'f' "file" "use a different input file. For stdin, use -"             <> metavar "FILE")
+--     <*> (many . fmap snd . popt (lift H.accountaliasp))
+--           (arg' "alias" "display accounts named OLD as NEW"                          <> metavar "OLD=NEW")
+--     <*> switch
+--           (arg' "ignore-assertions" "ignore any balance assertions in the journal")
+--     <*> (optional . fmap snd . popt' H.smartdate)
+--           (arg 'b' "begin" "include postings/txns on or after this date"             <> metavar "DATE")
+--     <*> (optional . fmap snd . popt' H.smartdate)
+--           (arg 'e' "end" "include postings/txns before this date"                    <> metavar "DATE")
+--     <*> switch
+--           (arg 'C' "cleared" "include only cleared postings/txns")
+--     <*> switch
+--           (arg' "pending" "include only pending postings/txns")
+--     <*> switch
+--           (arg 'U' "unmarked" "include only unmarked postings/txns")
+--     <*> switch
+--           (arg 'R' "real" "include only non-virtual postings")
+--     <*> switch
+--           (arg' "sunday" "weeks start on Sunday")
+--     <*> (many . popt predicatep)
+--           (arg 'D' "daily" "assertions that must hold at the end of the day"         <> metavar "ASSERT")
+--     <*> (many . popt predicatep)
+--           (arg 'W' "weekly" "assertions that must hold at the end of the week"       <> metavar "ASSERT")
+--     <*> (many . popt predicatep)
+--           (arg 'M' "monthly" "assertions that must hold at the end of the month"     <> metavar "ASSERT")
+--     <*> (many . popt predicatep)
+--           (arg 'Q' "quarterly" "assertions that must hold at the end of the quarter" <> metavar "ASSERT")
+--     <*> (many . popt predicatep)
+--           (arg 'Y' "yearly" "assertions that must hold at the end of the year"       <> metavar "ASSERT")
+--     <*> (many . parg predicatep)
+--           (help "assertions that must hold after every transaction"                  <> metavar "ASSERT")
+  ] 
   [generalflagsgroup1]
   []
   ([], Nothing) -- Just $ argsFlag "[QUERY]")
 
-data Opts = Opts {
-     assertion_ :: String
-    ,cliopts_   :: CliOpts
+{-
+faflags = [
+  -- flagNone ["debug-ui"] (setboolopt "rules-file") "run with no terminal output, showing console"
+   flagNone ["watch"] (setboolopt "watch") "watch for data and date changes and reload automatically"
+  ,flagReq  ["theme"] (\s opts -> Right $ setopt "theme" s opts) "THEME" ("use this custom display theme ("++intercalate ", " themeNames++")")
+  ,flagReq  ["register"] (\s opts -> Right $ setopt "register" s opts) "ACCTREGEX" "start in the (first) matched account's register"
+  ,flagNone ["change"] (setboolopt "change")
+    "show period balances (changes) at startup instead of historical balances"
+  -- ,flagNone ["cumulative"] (setboolopt "cumulative")
+  --   "show balance change accumulated across periods (in multicolumn reports)"
+  -- ,flagNone ["historical","H"] (setboolopt "historical")
+  --   "show historical ending balance in each period (includes postings before report start date)\n "
+  ]
+  ++ flattreeflags False
+--  ,flagNone ["present"] (setboolopt "present") "exclude transactions dated later than today (default)"
+  -- ,flagReq ["drop"] (\s opts -> Right $ setopt "drop" s opts) "N" "with --flat, omit this many leading account name components"
+  -- ,flagReq  ["format"] (\s opts -> Right $ setopt "format" s opts) "FORMATSTR" "use this custom line format"
+  -- ,flagNone ["no-elide"] (setboolopt "no-elide") "don't compress empty parent accounts on one line"
+
+-- famode :: Mode RawOpts
+cfamode =  (mode "hledger-check-fancyassertions" (setopt "command" "ui" def)
+            "browse accounts, postings and entries in a full-window curses interface"
+            (argsFlag "[PATTERNS]") []){
+              modeGroupFlags = Group {
+                                groupUnnamed = cfaflags
+                               ,groupHidden = hiddenflags
+                                 ++ [flagNone ["future"] (setboolopt "forecast") "compatibility alias, use --forecast instead"]
+                               ,groupNamed = [(generalflagsgroup1)]
+                               }
+             ,modeHelpSuffix=[
+                  -- "Reads your ~/.hledger.journal file, or another specified by $LEDGER_FILE or -f, and starts the full-window curses ui."
+                 ]
+           }
+-}
+
+data CFAOpts = CFAOpts {
+   assertion_ :: String
+  ,cliopts_   :: CliOpts
  } deriving (Show)
 
-defopts = Opts
-    def
-    defcliopts
+defcfaopts = CFAOpts
+  def
+  defcliopts
 
-getHledgerCheckFancyassertionsOpts :: IO Opts
-getHledgerCheckFancyassertionsOpts = do
-  cliopts <- getHledgerCliOpts cmdmode
-  return defopts {
-              assertion_ = fromMaybe "" $ maybestringopt "assertion" $ rawopts_ cliopts
-             ,cliopts_   = cliopts
+rawOptsToCFAOpts :: RawOpts -> IO CFAOpts
+rawOptsToCFAOpts rawopts = checkCFAOpts <$> do
+  cliopts <- rawOptsToCliOpts rawopts
+  return defcfaopts {
+              assertion_   = stringopt "assertion" rawopts
+             ,cliopts_     = cliopts
              }
+
+checkCFAOpts :: CFAOpts -> CFAOpts
+checkCFAOpts opts =
+  either usageError (const opts) $ do
+    case () of
+      _ -> Right ()
+
+getHledgerCFAOpts :: IO CFAOpts
+--getHledgerCFAOpts = processArgs cmdmode >>= return >>= rawOptsToCFAOpts
+getHledgerCFAOpts = do
+  args <- getArgs >>= expandArgsAt
+  let args' = replaceNumericFlags args
+  let cmdargopts = either usageError id $ process cmdmode args'
+  rawOptsToCFAOpts cmdargopts
 
 -------------------------------------------------------------------------------
 -- Main
 
 main :: IO ()
 main = do
-  opts@CliOpts{reportspec_=rspec} <- getHledgerCliOpts cmdmode
+  CFAOpts{cliopts_=opts@CliOpts{reportspec_=rspec}} <- getHledgerCFAOpts
   withJournalDo opts $
    \j -> do
-    d <- getCurrentDay
-    let
-      q = rsQuery rspec
+    -- d <- getCurrentDay
+    -- let
+    --   q = rsQuery rspec
     --   ts = filter (q `matchesTransaction`) $ jtxns $ journalSelectingAmountFromOpts (rsOpts rspec) j
     --   ts' = map transactionSwapDates ts
     -- mapM_ (T.putStrLn . showTransaction) ts'
