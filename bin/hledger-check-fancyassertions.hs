@@ -9,17 +9,17 @@
 -- The compiled executables can be run from anywhere, so you could add
 -- this directory to your $PATH and see them in hledger's command list.
 --
--- You could make this a standalone script that runs from anywhere and
--- recompiles itself when changed, by replacing "runghc" above with
--- "script --compile --resolver lts-16" (eg). However this uses the
--- hledger version from that stackage resolver, so in this case you
--- should check out the corresponding release-tagged version of this
--- script for compatibility (eg: git checkout 1.18.1).
+-- Or: you could make this a standalone script that runs from anywhere
+-- and recompiles itself when changed, by replacing "runghc" above
+-- with "script --compile --resolver lts-16" (eg). However this uses
+-- the hledger version from that stackage resolver, so in this case
+-- you should check out the corresponding release-tagged version of
+-- this script for compatibility (eg: git checkout 1.20.4).
 --
 -- This setup is adapted for some current limitations of stack's
--- ghc/runghc/script commands. Unfortunately it requires repeating
--- package dependencies, to the extent they are required, in multiple
--- places.
+-- ghc/runghc/script commands. Unfortunately when extra package
+-- dependencies are required by scripts, they must be repeated in
+-- multiple places.
 -- Keep synced: compile.sh, scripts*.test, hledger-*.hs ...
 
 {-
@@ -93,8 +93,14 @@ my checking account (including subaccounts)."
 
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PackageImports    #-}
+{-# LANGUAGE QuasiQuotes #-}
 
 module Main where
+
+import Data.String.QQ (s)
+import qualified Data.Text.IO as T
+import Hledger.Cli hiding (Not,Account,Amount)
+import Data.Default (def)
 
 import Control.Arrow (first)
 import Control.Monad (mplus, mzero, unless, void)
@@ -115,32 +121,188 @@ import qualified Hledger.Data as H
 import qualified Hledger.Query as H
 import qualified Hledger.Read as H
 import qualified Hledger.Utils.Parse as H
+import System.Console.CmdArgs.Explicit
 import Options.Applicative
 import "base-compat" Prelude.Compat ((<>))
 import System.Exit (exitFailure)
 import System.FilePath (FilePath)
 import qualified Text.Megaparsec as P
 import qualified Text.Megaparsec.Char as P
+import System.Environment (getArgs)
+
+-------------------------------------------------------------------------------
+-- Old:
+
+-- -- | Parsed command-line arguments.
+-- data Opts = Opts
+--     { file :: Maybe FilePath
+--     -- ^ Path to journal file.
+--     , aliases :: [H.AccountAlias]
+--     -- ^ Account name aliases: (OLD, NEW).
+--     , ignoreAssertions :: Bool
+--     -- ^ Ignore balance assertions while reading the journal file (but
+--     -- still apply any given to this tool.
+--     , begin :: Maybe H.SmartDate
+--     -- ^ Exclude postings/txns before this date.
+--     , end :: Maybe H.SmartDate
+--     -- ^ Exclude postings/txns on or after this date.
+--     , cleared :: Bool
+--     -- ^ Include only cleared postings/txns.
+--     , pending :: Bool
+--     -- ^ Include only pending postings/txns.
+--     , unmarked :: Bool
+--     -- ^ Include only unmarked postings/txns.
+--     , real :: Bool
+--     -- ^ Include only non-virtual postings.
+--     , sunday :: Bool
+--     -- ^ Week starts on Sunday.
+--     , assertionsDaily :: [(Text, Predicate)]
+--     -- ^ Account assertions that must hold at the end of each day.
+--     , assertionsWeekly :: [(Text, Predicate)]
+--     -- ^ Account assertions that must hold at the end of each week.
+--     , assertionsMonthly :: [(Text, Predicate)]
+--     -- ^ Account assertions that must hold at the end of each month.
+--     , assertionsQuarterly :: [(Text, Predicate)]
+--     -- ^ Account assertions that must hold at the end of each quarter.
+--     , assertionsYearly :: [(Text, Predicate)]
+--     -- ^ Account assertions that must hold at the end of each year.
+--     , assertionsAlways :: [(Text, Predicate)]
+--     -- ^ Account assertions that must hold after each txn.
+--     }
+--   deriving (Show)
+
+-- -- | Command-line arguments.
+-- args :: ParserInfo Opts
+-- args = info (helper <*> parser) $ mconcat
+--     [ fullDesc
+--     , progDesc "Complex account balance assertions for hledger journals."
+--     ]
+--   where
+--     parser = Opts <$> (optional . strOption)
+--                         (arg 'f' "file" "use a different input file. For stdin, use -"             <> metavar "FILE")
+--                   <*> (many . fmap snd . popt (lift H.accountaliasp))
+--                         (arg' "alias" "display accounts named OLD as NEW"                          <> metavar "OLD=NEW")
+--                   <*> switch
+--                         (arg' "ignore-assertions" "ignore any balance assertions in the journal")
+--                   <*> (optional . fmap snd . popt' H.smartdate)
+--                         (arg 'b' "begin" "include postings/txns on or after this date"             <> metavar "DATE")
+--                   <*> (optional . fmap snd . popt' H.smartdate)
+--                         (arg 'e' "end" "include postings/txns before this date"                    <> metavar "DATE")
+--                   <*> switch
+--                         (arg 'C' "cleared" "include only cleared postings/txns")
+--                   <*> switch
+--                         (arg' "pending" "include only pending postings/txns")
+--                   <*> switch
+--                         (arg 'U' "unmarked" "include only unmarked postings/txns")
+--                   <*> switch
+--                         (arg 'R' "real" "include only non-virtual postings")
+--                   <*> switch
+--                         (arg' "sunday" "weeks start on Sunday")
+--                   <*> (many . popt predicatep)
+--                         (arg 'D' "daily" "assertions that must hold at the end of the day"         <> metavar "ASSERT")
+--                   <*> (many . popt predicatep)
+--                         (arg 'W' "weekly" "assertions that must hold at the end of the week"       <> metavar "ASSERT")
+--                   <*> (many . popt predicatep)
+--                         (arg 'M' "monthly" "assertions that must hold at the end of the month"     <> metavar "ASSERT")
+--                   <*> (many . popt predicatep)
+--                         (arg 'Q' "quarterly" "assertions that must hold at the end of the quarter" <> metavar "ASSERT")
+--                   <*> (many . popt predicatep)
+--                         (arg 'Y' "yearly" "assertions that must hold at the end of the year"       <> metavar "ASSERT")
+--                   <*> (many . parg predicatep)
+--                         (help "assertions that must hold after every transaction"                  <> metavar "ASSERT")
+
+--     -- Shorthand for options
+--     arg s l h = arg' l h <> short s
+--     arg'  l h = long l <> help h
+
+--     -- Arguments and options from a Megaparsec parser.
+--     parg = argument . readParsec
+--     popt = option . readParsec
+--     popt' = option . readParsec'
+
+--     -- Turn a Parsec parser into a ReadM parser that also returns the
+--     -- input.
+--     readParsec :: H.JournalParser ReadM a -> ReadM (Text, a)
+--     readParsec p = do
+--       s <- str
+--       parsed <- P.runParserT (runStateT p H.nulljournal) "" s
+--       case parsed of
+--         Right (a, _) -> pure (s, a)
+--         Left err -> fail ("failed to parse input '" ++ unpack s ++ "': " ++ show err)
+
+--     readParsec' :: H.SimpleTextParser a -> ReadM (String, a)
+--     readParsec' p = do
+--       s <- str
+--       let parsed = runIdentity $ P.runParserT p "" (pack s)
+--       case parsed of
+--         Right a -> pure (s, a)
+--         Left err -> fail ("failed to parse input '" ++ s ++ "': " ++ show err)
+
+-- main = do
+--   args <- getArgs
+--   opts <- execParser args
+--   journalFile <- maybe H.defaultJournalPath pure (file opts)
+--   ejournal    <- H.readJournalFile H.definputopts{H.ignore_assertions_=ignoreAssertions opts} journalFile
+--   case ejournal of
+--     Right j -> do
+--       (journal, starting) <- fixupJournal opts j
+--       let postings = H.journalPostings journal
+--       -- b1 <- checkAssertions starting (assertionsAlways    opts) (groupByNE ((==) `on` H.ptransaction) postings)
+--       -- b2 <- checkAssertions starting (assertionsDaily     opts) (groupByNE sameDay     postings)
+--       -- b3 <- checkAssertions starting (assertionsWeekly    opts) (groupByNE (sameWeek (sunday opts))   postings)
+--       -- b4 <- checkAssertions starting (assertionsMonthly   opts) (groupByNE sameMonth   postings)
+--       -- b5 <- checkAssertions starting (assertionsQuarterly opts) (groupByNE sameQuarter postings)
+--       -- b6 <- checkAssertions starting (assertionsYearly    opts) (groupByNE sameYear    postings)
+--       -- unless (b1 && b2 && b3 && b4 && b5 && b6)
+--       exitFailure
+--     Left err -> putStrLn err >> exitFailure
+
+-------------------------------------------------------------------------------
+-- Command-line Arguments
+
+cmdmode = hledgerCommandMode
+  [s| check-fancy-assertions
+Swap date and date2, on transactions which have date2 defined.
+(Does not yet swap posting dates.)
+_FLAGS
+  |]
+  [] 
+  [generalflagsgroup1]
+  []
+  ([], Nothing) -- Just $ argsFlag "[QUERY]")
+
+data Opts = Opts {
+     assertion_ :: String
+    ,cliopts_   :: CliOpts
+ } deriving (Show)
+
+defopts = Opts
+    def
+    defcliopts
+
+getHledgerCheckFancyassertionsOpts :: IO Opts
+getHledgerCheckFancyassertionsOpts = do
+  cliopts <- getHledgerCliOpts cmdmode
+  return defopts {
+              assertion_ = fromMaybe "" $ maybestringopt "assertion" $ rawopts_ cliopts
+             ,cliopts_   = cliopts
+             }
+
+-------------------------------------------------------------------------------
+-- Main
 
 main :: IO ()
 main = do
-    opts <- execParser args
-    journalFile <- maybe H.defaultJournalPath pure (file opts)
-    ejournal    <- H.readJournalFile H.definputopts{H.ignore_assertions_=ignoreAssertions opts} journalFile
-    case ejournal of
-      Right j -> do
-        (journal, starting) <- fixupJournal opts j
-        let postings = H.journalPostings journal
-        b1 <- checkAssertions starting (assertionsAlways    opts) (groupByNE ((==) `on` H.ptransaction) postings)
-        b2 <- checkAssertions starting (assertionsDaily     opts) (groupByNE sameDay     postings)
-        b3 <- checkAssertions starting (assertionsWeekly    opts) (groupByNE (sameWeek (sunday opts))   postings)
-        b4 <- checkAssertions starting (assertionsMonthly   opts) (groupByNE sameMonth   postings)
-        b5 <- checkAssertions starting (assertionsQuarterly opts) (groupByNE sameQuarter postings)
-        b6 <- checkAssertions starting (assertionsYearly    opts) (groupByNE sameYear    postings)
-        unless (b1 && b2 && b3 && b4 && b5 && b6)
-          exitFailure
-      Left err -> putStrLn err >> exitFailure
-
+  opts@CliOpts{reportspec_=rspec} <- getHledgerCliOpts cmdmode
+  withJournalDo opts $
+   \j -> do
+    d <- getCurrentDay
+    let
+      q = rsQuery rspec
+    --   ts = filter (q `matchesTransaction`) $ jtxns $ journalSelectingAmountFromOpts (rsOpts rspec) j
+    --   ts' = map transactionSwapDates ts
+    -- mapM_ (T.putStrLn . showTransaction) ts'
+    exitFailure
 
 -------------------------------------------------------------------------------
 -- Assertions
@@ -244,26 +406,26 @@ inAssertion account = inAssertion'
 -------------------------------------------------------------------------------
 -- Journals
 
--- | Apply account aliases and restrict to the date range, return the
--- starting balance of every account.
-fixupJournal :: Opts -> H.Journal -> IO (H.Journal, [(H.AccountName, H.MixedAmount)])
-fixupJournal opts j = do
-    today <- H.getCurrentDay
-    let j' = (if cleared   opts then H.filterJournalTransactions (H.StatusQ H.Cleared)  else id)
-           . (if pending   opts then H.filterJournalTransactions (H.StatusQ H.Pending)  else id)
-           . (if unmarked  opts then H.filterJournalTransactions (H.StatusQ H.Unmarked) else id)
-           . (if real      opts then H.filterJournalTransactions (H.Real   True)       else id)
-           $ j
-    let starting = case begin opts of
-          Just _  ->
-              let dateSpan = H.DateSpan Nothing (fixDay today begin)
-              in closingBalances (H.filterJournalPostings (H.Date dateSpan) j')
-          Nothing -> []
-    let dateSpan = H.DateSpan (fixDay today begin) (fixDay today end)
-    pure (H.filterJournalTransactions (H.Date dateSpan) j', starting)
+-- -- | Apply account aliases and restrict to the date range, return the
+-- -- starting balance of every account.
+-- fixupJournal :: Opts -> H.Journal -> IO (H.Journal, [(H.AccountName, H.MixedAmount)])
+-- fixupJournal opts j = do
+--     today <- H.getCurrentDay
+--     let j' = (if cleared   opts then H.filterJournalTransactions (H.StatusQ H.Cleared)  else id)
+--            . (if pending   opts then H.filterJournalTransactions (H.StatusQ H.Pending)  else id)
+--            . (if unmarked  opts then H.filterJournalTransactions (H.StatusQ H.Unmarked) else id)
+--            . (if real      opts then H.filterJournalTransactions (H.Real   True)       else id)
+--            $ j
+--     let starting = case begin opts of
+--           Just _  ->
+--               let dateSpan = H.DateSpan Nothing (fixDay today begin)
+--               in closingBalances (H.filterJournalPostings (H.Date dateSpan) j')
+--           Nothing -> []
+--     let dateSpan = H.DateSpan (fixDay today begin) (fixDay today end)
+--     pure (H.filterJournalTransactions (H.Date dateSpan) j', starting)
 
-  where
-    fixDay today dayf = H.fixSmartDate today <$> dayf opts
+--   where
+--     fixDay today dayf = H.fixSmartDate today <$> dayf opts
 
 -- | Get the closing balances of every account in the journal.
 closingBalances :: H.Journal -> [(H.AccountName, H.MixedAmount)]
@@ -318,115 +480,6 @@ sameQuarter = sameish (\(y,m,_) -> (y, m `div` 4))
 -- | Check if two postings are in the same year.
 sameYear :: H.Posting -> H.Posting -> Bool
 sameYear = sameish (\(y,_,_) -> y)
-
-
--------------------------------------------------------------------------------
--- Command-line Arguments
-
--- | Parsed command-line arguments.
-data Opts = Opts
-    { file :: Maybe FilePath
-    -- ^ Path to journal file.
-    , aliases :: [H.AccountAlias]
-    -- ^ Account name aliases: (OLD, NEW).
-    , ignoreAssertions :: Bool
-    -- ^ Ignore balance assertions while reading the journal file (but
-    -- still apply any given to this tool.
-    , begin :: Maybe H.SmartDate
-    -- ^ Exclude postings/txns before this date.
-    , end :: Maybe H.SmartDate
-    -- ^ Exclude postings/txns on or after this date.
-    , cleared :: Bool
-    -- ^ Include only cleared postings/txns.
-    , pending :: Bool
-    -- ^ Include only pending postings/txns.
-    , unmarked :: Bool
-    -- ^ Include only unmarked postings/txns.
-    , real :: Bool
-    -- ^ Include only non-virtual postings.
-    , sunday :: Bool
-    -- ^ Week starts on Sunday.
-    , assertionsDaily :: [(Text, Predicate)]
-    -- ^ Account assertions that must hold at the end of each day.
-    , assertionsWeekly :: [(Text, Predicate)]
-    -- ^ Account assertions that must hold at the end of each week.
-    , assertionsMonthly :: [(Text, Predicate)]
-    -- ^ Account assertions that must hold at the end of each month.
-    , assertionsQuarterly :: [(Text, Predicate)]
-    -- ^ Account assertions that must hold at the end of each quarter.
-    , assertionsYearly :: [(Text, Predicate)]
-    -- ^ Account assertions that must hold at the end of each year.
-    , assertionsAlways :: [(Text, Predicate)]
-    -- ^ Account assertions that must hold after each txn.
-    }
-  deriving (Show)
-
--- | Command-line arguments.
-args :: ParserInfo Opts
-args = info (helper <*> parser) $ mconcat
-    [ fullDesc
-    , progDesc "Complex account balance assertions for hledger journals."
-    ]
-  where
-    parser = Opts <$> (optional . strOption)
-                        (arg 'f' "file" "use a different input file. For stdin, use -"             <> metavar "FILE")
-                  <*> (many . fmap snd . popt (lift H.accountaliasp))
-                        (arg' "alias" "display accounts named OLD as NEW"                          <> metavar "OLD=NEW")
-                  <*> switch
-                        (arg' "ignore-assertions" "ignore any balance assertions in the journal")
-                  <*> (optional . fmap snd . popt' H.smartdate)
-                        (arg 'b' "begin" "include postings/txns on or after this date"             <> metavar "DATE")
-                  <*> (optional . fmap snd . popt' H.smartdate)
-                        (arg 'e' "end" "include postings/txns before this date"                    <> metavar "DATE")
-                  <*> switch
-                        (arg 'C' "cleared" "include only cleared postings/txns")
-                  <*> switch
-                        (arg' "pending" "include only pending postings/txns")
-                  <*> switch
-                        (arg 'U' "unmarked" "include only unmarked postings/txns")
-                  <*> switch
-                        (arg 'R' "real" "include only non-virtual postings")
-                  <*> switch
-                        (arg' "sunday" "weeks start on Sunday")
-                  <*> (many . popt predicatep)
-                        (arg 'D' "daily" "assertions that must hold at the end of the day"         <> metavar "ASSERT")
-                  <*> (many . popt predicatep)
-                        (arg 'W' "weekly" "assertions that must hold at the end of the week"       <> metavar "ASSERT")
-                  <*> (many . popt predicatep)
-                        (arg 'M' "monthly" "assertions that must hold at the end of the month"     <> metavar "ASSERT")
-                  <*> (many . popt predicatep)
-                        (arg 'Q' "quarterly" "assertions that must hold at the end of the quarter" <> metavar "ASSERT")
-                  <*> (many . popt predicatep)
-                        (arg 'Y' "yearly" "assertions that must hold at the end of the year"       <> metavar "ASSERT")
-                  <*> (many . parg predicatep)
-                        (help "assertions that must hold after every transaction"                  <> metavar "ASSERT")
-
-    -- Shorthand for options
-    arg s l h = arg' l h <> short s
-    arg'  l h = long l <> help h
-
-    -- Arguments and options from a Megaparsec parser.
-    parg = argument . readParsec
-    popt = option . readParsec
-    popt' = option . readParsec'
-
-    -- Turn a Parsec parser into a ReadM parser that also returns the
-    -- input.
-    readParsec :: H.JournalParser ReadM a -> ReadM (Text, a)
-    readParsec p = do
-      s <- str
-      parsed <- P.runParserT (runStateT p H.nulljournal) "" s
-      case parsed of
-        Right (a, _) -> pure (s, a)
-        Left err -> fail ("failed to parse input '" ++ unpack s ++ "': " ++ show err)
-
-    readParsec' :: H.SimpleTextParser a -> ReadM (String, a)
-    readParsec' p = do
-      s <- str
-      let parsed = runIdentity $ P.runParserT p "" (pack s)
-      case parsed of
-        Right a -> pure (s, a)
-        Left err -> fail ("failed to parse input '" ++ s ++ "': " ++ show err)
 
 
 -------------------------------------------------------------------------------
