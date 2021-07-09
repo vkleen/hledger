@@ -50,6 +50,10 @@ jobs:
       with: 
         fetch-depth: 0        
 
+    - name: Check commit messages
+      run: | 
+        bin/commitlint ${{ github.event.before }}..${{ github.event.after }}
+
     # things to be cached/restored:
 
     - name: Cache stack global package db
