@@ -527,7 +527,7 @@ codep = option "" $ do
   pure code
 
 -- | Parse possibly empty text until a semicolon or newline.
--- Whitespace is preserved (for now - perhaps helps preserve alignment 
+-- Whitespace is preserved (for now - perhaps helps preserve alignment
 -- of same-line comments ?).
 descriptionp :: TextParser m Text
 descriptionp = noncommenttextp <?> "description"
@@ -692,12 +692,12 @@ modifiedaccountnamep = do
 accountnamep :: TextParser m AccountName
 accountnamep = singlespacedtext1p
 
--- | Parse possibly empty text, including whitespace, 
+-- | Parse possibly empty text, including whitespace,
 -- until a comment start (semicolon) or newline.
 noncommenttextp :: TextParser m T.Text
 noncommenttextp = takeWhileP Nothing (\c -> not $ isSameLineCommentStart c || isNewline c)
 
--- | Parse non-empty text, including whitespace, 
+-- | Parse non-empty text, including whitespace,
 -- until a comment start (semicolon) or newline.
 noncommenttext1p :: TextParser m T.Text
 noncommenttext1p = takeWhile1P Nothing (\c -> not $ isSameLineCommentStart c || isNewline c)
@@ -742,10 +742,10 @@ spaceandamountormissingp =
 -- an optional ledger-style lot price, and/or an optional ledger-style
 -- lot date. A lot price and lot date will be ignored.
 --
--- To parse the amount's quantity (number) we need to know which character 
+-- To parse the amount's quantity (number) we need to know which character
 -- represents a decimal mark. We find it in one of three ways:
 --
--- 1. If a decimal mark has been set explicitly in the journal parse state, 
+-- 1. If a decimal mark has been set explicitly in the journal parse state,
 --    we use that
 --
 -- 2. Or if the journal has a commodity declaration for the amount's commodity,
@@ -1287,7 +1287,7 @@ followingcommentp =
 -- >>> let parseTags = fmap getTags . rtp transactioncommentp
 --
 -- >>> parseTags "; name1: val1, name2:all this is value2"
--- Right [("name1","val1"),("name2","all this is value2")]
+-- Right [("name1","val1, name2:all this is value2")]
 --
 -- A tag's name must be immediately followed by a colon, without
 -- separating whitespace. The corresponding value consists of all the text
@@ -1316,7 +1316,7 @@ commenttagsp = do
 
     tagValue :: TextParser m Text
     tagValue = do
-      val <- T.strip <$> takeWhileP Nothing (\c -> c /= ',' && c /= '\n')
+      val <- T.strip <$> takeWhileP Nothing (\c -> c /= '\n')
       _ <- optional $ char ','
       pure val
 
