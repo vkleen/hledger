@@ -441,8 +441,8 @@ commoditydirectiveonelinep = do
     amount <- amountp
     pure $ (off, amount)
   lift skipNonNewlineSpaces
-  _ <- lift followingcommentp
-  let comm = Commodity{csymbol=acommodity, cformat=Just $ dbg6 "style from commodity directive" astyle}
+  (_comment, tags) <- lift transactioncommentp
+  let comm = Commodity{csymbol=acommodity, cformat=Just $ dbg6 "style from commodity directive" astyle, ctags = tags}
   if isNothing $ asdecimalpoint astyle
   then customFailure $ parseErrorAt off pleaseincludedecimalpoint
   else modify' (\j -> j{jcommodities=M.insert acommodity comm $ jcommodities j})
@@ -466,9 +466,9 @@ commoditydirectivemultilinep = do
   string "commodity"
   lift skipNonNewlineSpaces1
   sym <- lift commoditysymbolp
-  _ <- lift followingcommentp
+  (_comment, tags) <- lift transactioncommentp
   mformat <- lastMay <$> many (indented $ formatdirectivep sym)
-  let comm = Commodity{csymbol=sym, cformat=mformat}
+  let comm = Commodity{csymbol=sym, cformat=mformat, ctags = tags}
   modify' (\j -> j{jcommodities=M.insert sym comm $ jcommodities j})
   where
     indented = (lift skipNonNewlineSpaces1 >>)

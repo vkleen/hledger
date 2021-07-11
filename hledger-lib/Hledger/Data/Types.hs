@@ -253,7 +253,8 @@ type CommoditySymbol = Text
 
 data Commodity = Commodity {
   csymbol :: CommoditySymbol,
-  cformat :: Maybe AmountStyle
+  cformat :: Maybe AmountStyle,
+  ctags :: [Tag]
   } deriving (Show,Eq,Generic) --,Ord)
 
 data Amount = Amount {
