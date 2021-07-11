@@ -104,6 +104,9 @@ jobs:
       # for a PR this will be: origin/master..origin/$GITHUB_HEAD_REF
       # for a push it will be: $BEFORE..
       run: |
+        echo A"$BEFORE"B
+        echo C"${BEFORE}"D
+        echo E"${BEFORE:-origin/master}"F
         bin/commitlint ${BEFORE:-origin/master}..${GITHUB_HEAD_REF:+origin/$GITHUB_HEAD_REF}
 
     # things to be cached/restored:
